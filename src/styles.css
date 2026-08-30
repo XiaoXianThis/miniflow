@@ -1,0 +1,51 @@
+
+@import "tailwindcss";
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+}
+
+.react-flow__node {
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.react-flow__node.selectable.selected,
+.react-flow__node.selectable:focus,
+.react-flow__node.selectable:focus-visible {
+  box-shadow: none;
+}
+
+.react-flow__handle {
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  border-width: 2px;
+  pointer-events: all;
+  cursor: crosshair;
+}
+
+.react-flow__handle::before {
+  content: '';
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
