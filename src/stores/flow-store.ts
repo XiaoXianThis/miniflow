@@ -20,7 +20,13 @@ import {
   type FlowNodeType,
   type GptImageNodeData,
   type ImageViewNodeData,
+  type ExportPptNodeData,
 } from '#/components/flow/types'
+import {
+  buildPptxBlob,
+  downloadBlob,
+  resolveExportPptImages,
+} from '#/components/flow/export-ppt'
 import {
   assembleTextFromNode,
   wouldCreateTextInputCycle,
@@ -101,7 +107,7 @@ function normalizeAgentStatus(status?: AgentStatus): AgentStatus {
 function cloneNodeData(data: Record<string, unknown>, type: string) {
   const cloned = toPlain(data)
 
-  if (type === 'helloAgent' || type === 'gptImage') {
+  if (type === 'helloAgent' || type === 'gptImage' || type === 'exportPpt') {
     cloned.status = normalizeAgentStatus(cloned.status as AgentStatus | undefined)
   }
 
@@ -306,6 +312,7 @@ export function isValidFlowConnection(
   }
   if (source.type === 'helloAgent' && target.type === 'resultView') return true
   if (source.type === 'gptImage' && target.type === 'imageView') return true
+  if (source.type === 'imageView' && target.type === 'exportPpt') return true
 
   return false
 }
@@ -438,7 +445,9 @@ export const flowActions = {
       idMap.set(node.id, newId)
 
       const baseData =
-        node.type === 'helloAgent' || node.type === 'gptImage'
+        node.type === 'helloAgent' ||
+        node.type === 'gptImage' ||
+        node.type === 'exportPpt'
           ? cloneNodeData(
               node.data as Record<string, unknown>,
               node.type ?? '',
@@ -553,6 +562,82 @@ export const flowActions = {
         ? { ...node, data: { ...node.data, result } }
         : node,
     )
+  },
+
+  setImageViewImage(
+    imageViewNodeId: string,
+    image: string | null,
+    mimeType: string | null = null,
+  ) {
+    const store = getFlowStore()
+    const node = store.nodes.find((item) => item.id === imageViewNodeId)
+    if (!node || node.type !== 'imageView') return
+
+    store.nodes = store.nodes.map((item) => {
+      if (item.id !== imageViewNodeId) return item
+
+      if (image && mimeType) {
+        return {
+          ...item,
+          data: {
+            ...item.data,
+            image,
+            mimeType,
+            imageRef: item.id,
+          },
+        }
+      }
+
+      if (image === null) {
+        return {
+          ...item,
+          data: {
+            ...item.data,
+            image: null,
+            mimeType: null,
+            imageRef: null,
+          },
+        }
+      }
+
+      return item
+    })
+
+    void (async () => {
+      try {
+        if (image && mimeType) {
+          await saveFlowImage(imageViewNodeId, image, mimeType)
+        } else if (image === null) {
+          await deleteFlowImage(imageViewNodeId)
+        }
+      } catch (error) {
+        console.error('图片持久化失败', error)
+      }
+      schedulePersistFlush()
+    })()
+  },
+
+  addImageViewWithImage(
+    position: { x: number; y: number },
+    image: string,
+    mimeType: string,
+  ) {
+    const store = getFlowStore()
+    const size = NODE_DEFAULT_SIZES.imageView
+    const newNode: Node = {
+      id: `imageView-${crypto.randomUUID()}`,
+      type: 'imageView',
+      position,
+      data: getDefaultNodeData('imageView'),
+      width: size.width,
+      height: size.height,
+      style: { width: size.width, height: size.height },
+      deletable: true,
+    }
+
+    store.nodes = [...store.nodes, newNode]
+    flowActions.setImageViewImage(newNode.id, image, mimeType)
+    return newNode.id
   },
 
   setImageResults(
@@ -678,6 +763,48 @@ export const flowActions = {
       } else {
         console.error('GPT 生图失败', error)
       }
+    }
+  },
+
+  async exportPpt(exportNodeId: string) {
+    const store = getFlowStore()
+    const node = store.nodes.find((item) => item.id === exportNodeId)
+    if (!node || node.type !== 'exportPpt') return
+
+    const exportData = node.data as ExportPptNodeData
+    const layout = exportData.layout ?? '16x9'
+    const imageFit = exportData.imageFit ?? 'cover'
+
+    flowActions.setNodeStatus(exportNodeId, 'running')
+    flowActions.updateNodeData(exportNodeId, { lastError: null })
+
+    try {
+      const images = await resolveExportPptImages(
+        store.nodes,
+        store.edges,
+        exportNodeId,
+        getFlowImage,
+      )
+
+      if (images.length === 0) {
+        flowActions.setNodeStatus(exportNodeId, 'error')
+        flowActions.updateNodeData(exportNodeId, {
+          lastError: '请连接至少一个含图片的图片查看节点',
+        })
+        return
+      }
+
+      const blob = await buildPptxBlob(images, { layout, imageFit })
+      downloadBlob(blob, `miniflow-${Date.now()}.pptx`)
+      flowActions.setNodeStatus(exportNodeId, 'done')
+      schedulePersistFlush()
+    } catch (error) {
+      flowActions.setNodeStatus(exportNodeId, 'error')
+      flowActions.updateNodeData(exportNodeId, {
+        lastError: '导出 PPT 失败，请稍后重试',
+      })
+      schedulePersistFlush()
+      console.error('导出 PPT 失败', error)
     }
   },
 }

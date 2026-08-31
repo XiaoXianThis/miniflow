@@ -218,6 +218,20 @@ export async function logoutCurrentSession() {
   clearSessionCookie()
 }
 
-export function resetLoginAttemptsForTests() {
-  loginAttempts.clear()
+export async function updateUserPassword(username: string, password: string) {
+  const db = getDb()
+  const user = await db
+    .select()
+    .from(users)
+    .where(eq(users.username, username))
+    .get()
+
+  if (!user) {
+    throw new AuthError('用户不存在', 'INVALID_CREDENTIALS')
+  }
+
+  await db
+    .update(users)
+    .set({ passwordHash: await hashPassword(password) })
+    .where(eq(users.id, user.id))
 }

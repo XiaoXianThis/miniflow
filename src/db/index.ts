@@ -16,29 +16,35 @@ let dbInstance: ReturnType<typeof createDb> | undefined
 let migrated = false
 
 function createDb(path: string) {
-  mkdirSync(dirname(path), { recursive: true })
+  const directory = dirname(path)
+  if (directory && directory !== '.') {
+    mkdirSync(directory, { recursive: true })
+  }
+
   const sqlite = new Database(path)
   sqlite.exec('PRAGMA foreign_keys = ON')
   return drizzle(sqlite, { schema })
 }
 
+function getSqliteClient(db: ReturnType<typeof createDb>) {
+  return (db as unknown as { $client: Database }).$client
+}
+
 export function clearTables() {
-  const db = getDb()
-  const sqlite = (db as unknown as { $client: Database }).$client
+  const sqlite = getSqliteClient(getDb())
   sqlite.exec('DELETE FROM sessions; DELETE FROM users;')
 }
 
 export function closeDb() {
   if (!dbInstance) return
 
-  const sqlite = (dbInstance as unknown as { $client: Database }).$client
-  sqlite.close()
+  getSqliteClient(dbInstance).close()
   dbInstance = undefined
   migrated = false
 }
 
 export function migrateDb(db = getDb()) {
-  const sqlite = (db as unknown as { $client: Database }).$client
+  const sqlite = getSqliteClient(db)
 
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -75,7 +81,10 @@ export function getDb() {
 }
 
 export function resetDbForTests(path: string) {
+  closeDb()
   dbInstance = createDb(path)
   migrated = false
-  return getDb()
+  migrateDb(dbInstance)
+  migrated = true
+  return dbInstance
 }

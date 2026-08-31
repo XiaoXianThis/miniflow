@@ -4,6 +4,7 @@ import { flowActions } from '#/stores/flow-store'
 import {
   GPT_IMAGE_DEFAULTS,
   GPT_IMAGE_SIZE_PRESETS,
+  formatGptImageSizeLabel,
   type GptImageBackground,
   type GptImageFormat,
   type GptImageModeration,
@@ -104,16 +105,19 @@ export function GptImageNode({
 
         {options.size === 'custom' && (
           <div className="mb-2">
-            <label className={labelClass}>自定义尺寸（宽×高，16 的倍数）</label>
+            <label className={labelClass}>自定义（宽×高，16 的倍数）</label>
             <input
               type="text"
               value={options.customSize}
               onChange={(e) =>
                 flowActions.updateNodeData(id, { customSize: e.target.value })
               }
-              placeholder="1536x1024"
+              placeholder="2048x1152"
               className={fieldClass}
             />
+            <p className="mt-1 text-[11px] text-amber-600">
+              当前：{formatGptImageSizeLabel('custom', options.customSize)}
+            </p>
           </div>
         )}
 

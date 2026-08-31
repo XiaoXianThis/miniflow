@@ -9,6 +9,7 @@ const paletteItems: { type: FlowNodeType; label: string; color: string }[] = [
   { type: 'resultView', label: '输出结果', color: 'bg-emerald-600 hover:bg-emerald-700' },
   { type: 'gptImage', label: 'GPT 生图', color: 'bg-amber-600 hover:bg-amber-700' },
   { type: 'imageView', label: '图片查看', color: 'bg-rose-600 hover:bg-rose-700' },
+  { type: 'exportPpt', label: '导出 PPT', color: 'bg-indigo-600 hover:bg-indigo-700' },
 ]
 
 export function NodePalette({

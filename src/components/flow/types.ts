@@ -13,6 +13,7 @@ export type FlowNodeType =
   | 'resultView'
   | 'gptImage'
   | 'imageView'
+  | 'exportPpt'
 
 export type AgentStatus = 'idle' | 'running' | 'done' | 'error'
 
@@ -48,6 +49,17 @@ export type ImageViewNodeData = {
   imageRef: string | null
 }
 
+export type PptLayout = '16x9' | '4x3' | 'followImage'
+
+export type PptImageFit = 'cover' | 'stretch' | 'fillWidth' | 'fillHeight'
+
+export type ExportPptNodeData = {
+  status: AgentStatus
+  layout: PptLayout
+  imageFit: PptImageFit
+  lastError: string | null
+}
+
 export const NODE_DEFAULT_SIZES: Record<
   FlowNodeType,
   { width: number; height: number; minWidth: number; minHeight: number }
@@ -57,6 +69,7 @@ export const NODE_DEFAULT_SIZES: Record<
   resultView: { width: 240, height: 140, minWidth: 180, minHeight: 100 },
   gptImage: { width: 320, height: 380, minWidth: 260, minHeight: 200 },
   imageView: { width: 280, height: 280, minWidth: 200, minHeight: 160 },
+  exportPpt: { width: 260, height: 340, minWidth: 220, minHeight: 280 },
 }
 
 export function getDefaultNodeData(type: FlowNodeType) {
@@ -74,5 +87,12 @@ export function getDefaultNodeData(type: FlowNodeType) {
       } satisfies GptImageNodeData
     case 'imageView':
       return { image: null, mimeType: null, imageRef: null } satisfies ImageViewNodeData
+    case 'exportPpt':
+      return {
+        status: 'idle',
+        layout: '16x9',
+        imageFit: 'cover',
+        lastError: null,
+      } satisfies ExportPptNodeData
   }
 }
