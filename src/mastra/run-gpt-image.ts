@@ -2,6 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 
 import {
   buildGptImageRequest,
+  buildGptImageEditFormData,
   toApiRequestBody,
   type GptImageRequest,
 } from '#/components/flow/gpt-image-options'
@@ -14,6 +15,48 @@ type ImageGenerationResponse = {
     output_format?: string
   }>
   error?: { message?: string }
+}
+
+const FETCH_RETRIES = 3
+const FETCH_RETRY_DELAY_MS = 2_000
+
+function isRetryableFetchError(error: unknown) {
+  if (!(error instanceof Error)) return false
+
+  const message = error.message.toLowerCase()
+  return (
+    message.includes('socket connection was closed') ||
+    message.includes('econnreset') ||
+    message.includes('connection reset') ||
+    message.includes('fetch failed')
+  )
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function fetchWithRetry(input: string, init?: RequestInit) {
+  let lastError: unknown
+
+  for (let attempt = 0; attempt <= FETCH_RETRIES; attempt++) {
+    try {
+      return await fetch(input, init)
+    } catch (error) {
+      lastError = error
+      if (attempt < FETCH_RETRIES && isRetryableFetchError(error)) {
+        await sleep(FETCH_RETRY_DELAY_MS * (attempt + 1))
+        continue
+      }
+      break
+    }
+  }
+
+  if (isRetryableFetchError(lastError)) {
+    throw new Error('生图服务连接不稳定，请稍后重试')
+  }
+
+  throw lastError
 }
 
 function getConfig() {
@@ -31,7 +74,7 @@ function getConfig() {
 }
 
 async function fetchImageAsBase64(url: string) {
-  const response = await fetch(url)
+  const response = await fetchWithRetry(url)
   if (!response.ok) {
     throw new Error(`下载图片失败: ${response.status}`)
   }
@@ -50,17 +93,29 @@ export const runGptImageFn = createServerFn({ method: 'POST' })
 
     const { apiKey, baseURL } = getConfig()
     const request = buildGptImageRequest(data)
-    const body = toApiRequestBody(request)
+    const hasReferences = (request.referenceImages?.length ?? 0) > 0
 
-    const response = await fetch(`${baseURL}/images/generations`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120_000),
-    })
+    const response = await fetchWithRetry(
+      `${baseURL}/${hasReferences ? 'images/edits' : 'images/generations'}`,
+      hasReferences
+        ? {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body: buildGptImageEditFormData(request),
+            signal: AbortSignal.timeout(120_000),
+          }
+        : {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(toApiRequestBody(request)),
+            signal: AbortSignal.timeout(120_000),
+          },
+    )
 
     const json = (await response.json()) as ImageGenerationResponse
 

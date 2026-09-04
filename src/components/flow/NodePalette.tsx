@@ -25,18 +25,24 @@ export function NodePalette({
   }
 
   return (
-    <Panel className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white/95 p-2 shadow-md backdrop-blur">
-      {paletteItems.map((item) => (
-        <button
-          key={item.type}
-          type="button"
-          onClick={() => onAddNode(item.type)}
-          className={`rounded px-3 py-1.5 text-sm font-medium text-white transition ${item.color}`}
-        >
-          + {item.label}
-        </button>
-      ))}
-      <div className="mx-1 h-6 w-px bg-slate-200" />
+    <Panel
+      position="top-left"
+      className="!bottom-0 flex w-40 flex-col gap-2 rounded-lg border border-slate-200 bg-white/95 p-2 shadow-md backdrop-blur"
+    >
+      <div className="px-1 pt-0.5 text-xs font-medium text-slate-500">添加卡片</div>
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+        {paletteItems.map((item) => (
+          <button
+            key={item.type}
+            type="button"
+            onClick={() => onAddNode(item.type)}
+            className={`rounded px-3 py-1.5 text-sm font-medium text-white transition ${item.color}`}
+          >
+            + {item.label}
+          </button>
+        ))}
+      </div>
+      <div className="h-px w-full shrink-0 bg-slate-200" />
       <button
         type="button"
         onClick={handleClearCanvas}

@@ -333,4 +333,18 @@ describe('isValidFlowConnection', () => {
       ),
     ).toBe(false)
   })
+
+  test('allows imageView to gptImage', () => {
+    const nodes: Node[] = [
+      imageViewNode('img-1', { x: 0, y: 0 }),
+      { id: 'gpt-1', type: 'gptImage', position: { x: 200, y: 0 }, data: {} },
+    ]
+
+    expect(
+      isValidFlowConnection(
+        { source: 'img-1', target: 'gpt-1' },
+        nodes,
+      ),
+    ).toBe(true)
+  })
 })

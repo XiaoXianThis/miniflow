@@ -1,7 +1,8 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 
 import { flowActions } from '#/stores/flow-store'
+import { ImageLightbox } from '../ImageLightbox'
 import {
   getImageFilesFromDataTransfer,
   hasImageFilesInDataTransfer,
@@ -36,6 +37,7 @@ export function ImageViewNode({
   selected,
 }: NodeProps & { data: ImageViewNodeData }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
   const src =
     data.image && data.mimeType
       ? `data:${data.mimeType};base64,${data.image}`
@@ -108,7 +110,12 @@ export function ImageViewNode({
           <img
             src={src}
             alt="图片预览"
-            className="max-h-full max-w-full object-contain"
+            title="点击查看大图"
+            className="max-h-full max-w-full cursor-zoom-in object-contain"
+            onClick={(event) => {
+              event.stopPropagation()
+              setPreviewOpen(true)
+            }}
           />
         ) : (
           <div className="px-3 py-6 text-center text-sm text-slate-400">
@@ -146,6 +153,9 @@ export function ImageViewNode({
         )}
       </div>
       <Handle type="source" position={Position.Right} className="!bg-rose-500" />
+      {previewOpen && src ? (
+        <ImageLightbox src={src} onClose={() => setPreviewOpen(false)} />
+      ) : null}
     </ResizableNodeShell>
   )
 }

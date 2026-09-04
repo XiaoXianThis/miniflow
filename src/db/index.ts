@@ -32,7 +32,7 @@ function getSqliteClient(db: ReturnType<typeof createDb>) {
 
 export function clearTables() {
   const sqlite = getSqliteClient(getDb())
-  sqlite.exec('DELETE FROM sessions; DELETE FROM users;')
+  sqlite.exec('DELETE FROM flows; DELETE FROM sessions; DELETE FROM users;')
 }
 
 export function closeDb() {
@@ -64,6 +64,18 @@ export function migrateDb(db = getDb()) {
 
     CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS sessions_expires_at_idx ON sessions(expires_at);
+
+    CREATE TABLE IF NOT EXISTS flows (
+      id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      graph TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS flows_user_id_idx ON flows(user_id);
+    CREATE INDEX IF NOT EXISTS flows_user_updated_at_idx ON flows(user_id, updated_at);
   `)
 }
 

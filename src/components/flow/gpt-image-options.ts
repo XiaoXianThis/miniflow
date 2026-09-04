@@ -133,6 +133,13 @@ export const GPT_IMAGE_SIZE_PRESETS: {
   { value: 'custom', label: '自定义' },
 ]
 
+export const GPT_IMAGE_MAX_REFERENCE_IMAGES = 8
+
+export type GptImageReferenceImage = {
+  base64: string
+  mimeType: string
+}
+
 export const GPT_IMAGE_DEFAULTS = {
   model: 'gpt-image-2',
   size: '2048x1152' as GptImageSizePreset,
@@ -156,6 +163,7 @@ export type GptImageRequest = {
   outputCompression: number
   background: GptImageBackground
   moderation: GptImageModeration
+  referenceImages?: GptImageReferenceImage[]
 }
 
 export function resolveGptImageSize(
@@ -179,7 +187,14 @@ export function buildGptImageRequest(
     outputCompression: data.outputCompression ?? GPT_IMAGE_DEFAULTS.outputCompression,
     background: data.background ?? GPT_IMAGE_DEFAULTS.background,
     moderation: data.moderation ?? GPT_IMAGE_DEFAULTS.moderation,
+    referenceImages: data.referenceImages,
   }
+}
+
+function extensionFromMimeType(mimeType: string) {
+  if (mimeType.includes('jpeg') || mimeType.includes('jpg')) return 'jpg'
+  if (mimeType.includes('webp')) return 'webp'
+  return 'png'
 }
 
 export function toApiRequestBody(request: GptImageRequest) {
@@ -206,4 +221,35 @@ export function toApiRequestBody(request: GptImageRequest) {
   }
 
   return body
+}
+
+export function buildGptImageEditFormData(request: GptImageRequest) {
+  let outputFormat = request.outputFormat
+  let background = request.background
+
+  if (background === 'transparent' && outputFormat === 'jpeg') {
+    outputFormat = 'png'
+  }
+
+  const form = new FormData()
+  form.append('model', request.model)
+  form.append('prompt', request.prompt)
+  form.append('size', request.size)
+  form.append('quality', request.quality)
+  form.append('n', String(request.n))
+  form.append('output_format', outputFormat)
+  form.append('background', background)
+  form.append('moderation', request.moderation)
+
+  if (outputFormat === 'jpeg' || outputFormat === 'webp') {
+    form.append('output_compression', String(request.outputCompression))
+  }
+
+  for (const image of request.referenceImages ?? []) {
+    const bytes = Buffer.from(image.base64, 'base64')
+    const blob = new Blob([bytes], { type: image.mimeType })
+    form.append('image', blob, `reference.${extensionFromMimeType(image.mimeType)}`)
+  }
+
+  return form
 }

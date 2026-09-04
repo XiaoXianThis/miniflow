@@ -1,8 +1,16 @@
+import { useMemo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { useSnapshot } from 'valtio/react'
 
 import { flowActions } from '#/stores/flow-store'
+import { useFlowStore } from '#/stores/flow-store-context'
+import {
+  collectGptImageReferenceEntries,
+  countReadyGptImageReferences,
+} from '../gpt-image-references'
 import {
   GPT_IMAGE_DEFAULTS,
+  GPT_IMAGE_MAX_REFERENCE_IMAGES,
   GPT_IMAGE_SIZE_PRESETS,
   formatGptImageSizeLabel,
   type GptImageBackground,
@@ -47,10 +55,27 @@ export function GptImageNode({
   data,
   selected,
 }: NodeProps & { data: GptImageNodeData }) {
+  const flowStore = useFlowStore()
+  const { nodes, edges } = useSnapshot(flowStore)
   const options = getNodeOptions(data)
   const showCompression =
     options.outputFormat === 'jpeg' || options.outputFormat === 'webp'
   const size = NODE_DEFAULT_SIZES.gptImage
+
+  const { connectedReferences, readyReferences } = useMemo(() => {
+    const entries = collectGptImageReferenceEntries(
+      nodes as typeof flowStore.nodes,
+      edges as typeof flowStore.edges,
+      id,
+    )
+    return {
+      connectedReferences: entries.length,
+      readyReferences: countReadyGptImageReferences(
+        entries,
+        nodes as typeof flowStore.nodes,
+      ),
+    }
+  }, [nodes, edges, id, flowStore.nodes, flowStore.edges])
 
   return (
     <ResizableNodeShell
@@ -63,7 +88,16 @@ export function GptImageNode({
       <Handle type="target" position={Position.Left} className="!bg-amber-500" />
       <NodeHeader title="GPT 生图" nodeId={id} className="text-amber-900" />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <p className="mb-3 text-xs text-amber-700">连接文本输入作为提示词</p>
+        <p className="mb-2 text-xs text-amber-700">连接文本输入作为提示词</p>
+        <p className="mb-3 text-xs text-amber-600">
+          可连接图片查看节点作为参考图，最多 {GPT_IMAGE_MAX_REFERENCE_IMAGES} 张
+          {connectedReferences > 0
+            ? `（已连接 ${connectedReferences} 个，${readyReferences} 个含图片）`
+            : ''}
+          {connectedReferences > GPT_IMAGE_MAX_REFERENCE_IMAGES
+            ? `，仅使用前 ${GPT_IMAGE_MAX_REFERENCE_IMAGES} 张`
+            : ''}
+        </p>
 
         <div className="mb-2 grid grid-cols-2 gap-2">
           <div>

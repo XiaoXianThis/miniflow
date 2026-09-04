@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   GPT_IMAGE_SIZE_PRESETS,
+  buildGptImageEditFormData,
+  buildGptImageRequest,
   formatAspectRatio,
   formatGptImageDimensionsLabel,
   formatGptImageSizeLabel,
@@ -51,5 +53,25 @@ describe('gpt image size labels', () => {
     expect(GPT_IMAGE_SIZE_PRESETS.find((item) => item.value === '2048x1152')?.label).toBe(
       '16:9 2K',
     )
+  })
+})
+
+describe('buildGptImageEditFormData', () => {
+  test('appends reference images and generation fields', () => {
+    const request = buildGptImageRequest({
+      prompt: 'Blend these references',
+      referenceImages: [
+        {
+          base64: 'aGVsbG8=',
+          mimeType: 'image/png',
+        },
+      ],
+    })
+    const form = buildGptImageEditFormData(request)
+
+    expect(form.get('model')).toBe(request.model)
+    expect(form.get('prompt')).toBe('Blend these references')
+    expect(form.get('output_format')).toBe(request.outputFormat)
+    expect(form.getAll('image')).toHaveLength(1)
   })
 })

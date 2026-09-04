@@ -9,10 +9,12 @@ import {
   type Node,
   type NodeChange,
 } from '@xyflow/react'
-import { LocalStorageStrategy } from 'valtio-persist'
+import { proxy, snapshot, subscribe } from 'valtio'
 
 import { runGptImageFn } from '#/mastra/run-gpt-image'
 import { runHelloAgentFn } from '#/mastra/run-hello-agent'
+import { getFlowFn, saveFlowFn } from '#/server/flow-fns'
+import { DEFAULT_FLOW_NAME } from '#/shared/flows'
 import {
   getDefaultNodeData,
   NODE_DEFAULT_SIZES,
@@ -33,8 +35,14 @@ import {
 } from '#/components/flow/text-assembly'
 import {
   GPT_IMAGE_DEFAULTS,
+  GPT_IMAGE_MAX_REFERENCE_IMAGES,
   resolveGptImageSize,
 } from '#/components/flow/gpt-image-options'
+import {
+  collectGptImageReferenceEntries,
+  countReadyGptImageReferences,
+  resolveGptImageReferences,
+} from '#/components/flow/gpt-image-references'
 import { isAuthFailure } from '#/shared/auth'
 import {
   deleteFlowImage,
@@ -42,16 +50,20 @@ import {
   getFlowImage,
   saveFlowImage,
 } from './flow-image-store'
-import { FlowSerializationStrategy } from './flow-persist-serializer'
+import { toPersistedGraph } from './flow-persist-serializer'
 
-const STORAGE_KEY = 'miniflow-flow'
+export type FlowSaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
 export interface FlowPersistedState {
+  id: string
+  name: string
   nodes: Node[]
   edges: Edge[]
 }
 
 const defaultState: FlowPersistedState = {
+  id: '',
+  name: DEFAULT_FLOW_NAME,
   nodes: [],
   edges: [],
 }
@@ -62,16 +74,26 @@ declare global {
   }
 }
 
-let persistPromise:
-  | Promise<{
-      store: FlowPersistedState
-      persist: () => Promise<void>
-    }>
-  | undefined
-
-let persistFlush: (() => Promise<void>) | null = null
+const SAVE_DEBOUNCE_MS = 300
 
 export let flowStore: FlowPersistedState | undefined
+export const flowSaveStore = proxy({
+  saveStatus: 'idle' as FlowSaveStatus,
+})
+
+let hydrating = false
+let persistTimer: ReturnType<typeof setTimeout> | null = null
+let unsubscribePersist: (() => void) | null = null
+let storeQueue: Promise<void> = Promise.resolve()
+
+function enqueueStoreTask<T>(task: () => Promise<T>): Promise<T> {
+  const run = storeQueue.then(task, task)
+  storeQueue = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
 
 function toPlain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -84,20 +106,6 @@ type FlowClipboard = {
 
 let clipboard: FlowClipboard | null = null
 let pasteCount = 0
-
-class SafeLocalStorageStrategy extends LocalStorageStrategy {
-  set(key: string, value: string): void {
-    try {
-      super.set(key, value)
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-        console.error('MiniFlow: localStorage 配额不足，流程数据未能保存')
-        return
-      }
-      throw error
-    }
-  }
-}
 
 function normalizeAgentStatus(status?: AgentStatus): AgentStatus {
   if (status === 'running') return 'idle'
@@ -214,7 +222,28 @@ async function hydrateImageViews(store: FlowPersistedState) {
 }
 
 function schedulePersistFlush() {
-  void flushFlowStore()
+  if (hydrating || !flowStore?.id) return
+  if (persistTimer) clearTimeout(persistTimer)
+  persistTimer = setTimeout(() => {
+    persistTimer = null
+    void flushFlowStore()
+  }, SAVE_DEBOUNCE_MS)
+}
+
+function captureSavePayload() {
+  const store = getFlowStore()
+  const snap = snapshot(store)
+  const graph = toPersistedGraph({
+    nodes: snap.nodes as Node[],
+    edges: snap.edges as Edge[],
+  })
+
+  return {
+    flowId: snap.id,
+    name: snap.name,
+    nodes: graph.nodes,
+    edges: graph.edges,
+  }
 }
 
 async function persistImageViewNodes(
@@ -244,19 +273,40 @@ async function persistImageViewNodes(
 }
 
 export async function flushFlowStore() {
-  if (!persistFlush) return
+  if (persistTimer) {
+    clearTimeout(persistTimer)
+    persistTimer = null
+  }
+
+  if (hydrating || !flowStore?.id) return
+
+  const payload = captureSavePayload()
+  if (!payload.flowId) return
+
+  flowSaveStore.saveStatus = 'saving'
+
   try {
-    await persistFlush()
+    await saveFlowFn({ data: payload })
+    flowSaveStore.saveStatus = 'saved'
   } catch (error) {
+    flowSaveStore.saveStatus = 'error'
     console.error('流程状态保存失败', error)
   }
+}
+
+function bindPersistSubscription(store: FlowPersistedState) {
+  unsubscribePersist?.()
+  unsubscribePersist = subscribe(store, () => {
+    schedulePersistFlush()
+  })
 }
 
 export async function initFlowStore() {
   if (flowStore) return flowStore
 
-  if (typeof window !== 'undefined' && window.__miniflowStore) {
+  if (typeof window !== 'undefined' && window.__miniflowStore?.id !== undefined) {
     flowStore = window.__miniflowStore
+    bindPersistSubscription(flowStore)
     return flowStore
   }
 
@@ -264,23 +314,59 @@ export async function initFlowStore() {
     throw new Error('initFlowStore must only run in the browser')
   }
 
-  if (!persistPromise) {
-    persistPromise = import('valtio-persist').then(({ persist }) =>
-      persist(defaultState, STORAGE_KEY, {
-        debounceTime: 300,
-        storageStrategy: SafeLocalStorageStrategy,
-        serializationStrategy: FlowSerializationStrategy,
-      }),
-    )
-  }
-
-  const { store, persist: persistFn } = await persistPromise
-  persistFlush = persistFn
-  migrateLegacyNodes(store)
-  await hydrateImageViews(store)
+  const store = proxy<FlowPersistedState>(toPlain(defaultState))
   flowStore = store
   window.__miniflowStore = store
+  bindPersistSubscription(store)
   return store
+}
+
+export async function loadFlowDocument(flowId: string) {
+  const store = await initFlowStore()
+
+  return enqueueStoreTask(async () => {
+    if (store.id && store.id !== flowId) {
+      await flushFlowStore()
+    }
+
+    hydrating = true
+    flowSaveStore.saveStatus = 'idle'
+
+    try {
+      const doc = await getFlowFn({ data: { flowId } })
+      store.id = doc.id
+      store.name = doc.name
+      store.nodes = toPlain(doc.nodes as Node[])
+      store.edges = toPlain(doc.edges as Edge[])
+      migrateLegacyNodes(store)
+      await hydrateImageViews(store)
+      flowSaveStore.saveStatus = 'saved'
+    } finally {
+      hydrating = false
+    }
+
+    return store
+  })
+}
+
+export async function unloadFlowDocument() {
+  return enqueueStoreTask(async () => {
+    await flushFlowStore()
+    if (!flowStore) return
+    hydrating = true
+    try {
+      flowStore.id = ''
+    } finally {
+      hydrating = false
+    }
+  })
+}
+
+export function syncLoadedFlowName(flowId: string, name: string) {
+  if (!flowStore || flowStore.id !== flowId) return
+  hydrating = true
+  flowStore.name = name
+  hydrating = false
 }
 
 function getFlowStore() {
@@ -302,6 +388,7 @@ export function isValidFlowConnection(
 
   if (source.type === 'textInput' && target.type === 'helloAgent') return true
   if (source.type === 'textInput' && target.type === 'gptImage') return true
+  if (source.type === 'imageView' && target.type === 'gptImage') return true
   if (source.type === 'textInput' && target.type === 'textInput') {
     return !wouldCreateTextInputCycle(
       connection.source,
@@ -319,7 +406,11 @@ export function isValidFlowConnection(
 
 function getAssembledTextFromConnection(nodeId: string) {
   const store = getFlowStore()
-  const incoming = store.edges.find((edge) => edge.target === nodeId)
+  const incoming = store.edges.find((edge) => {
+    if (edge.target !== nodeId) return false
+    const sourceNode = store.nodes.find((node) => node.id === edge.source)
+    return sourceNode?.type === 'textInput'
+  })
   if (!incoming) return null
 
   const sourceNode = store.nodes.find((node) => node.id === incoming.source)
@@ -333,6 +424,11 @@ function getAssembledTextFromConnection(nodeId: string) {
 }
 
 export const flowActions = {
+  setFlowName(name: string) {
+    const store = getFlowStore()
+    store.name = name
+  },
+
   onNodesChange(changes: NodeChange[]) {
     const store = getFlowStore()
     const removedIds = changes
@@ -719,6 +815,7 @@ export const flowActions = {
   },
 
   async runGptImage(imageNodeId: string) {
+    const store = getFlowStore()
     const prompt = getAssembledTextFromConnection(imageNodeId)
     if (prompt === null) {
       flowActions.setNodeStatus(imageNodeId, 'error')
@@ -730,12 +827,49 @@ export const flowActions = {
       return
     }
 
+    const referenceEntries = collectGptImageReferenceEntries(
+      store.nodes,
+      store.edges,
+      imageNodeId,
+    )
+    const connectedReferences = referenceEntries.length
+    const readyReferences = countReadyGptImageReferences(
+      referenceEntries,
+      store.nodes,
+    )
+
+    if (connectedReferences > 0 && readyReferences === 0) {
+      flowActions.setNodeStatus(imageNodeId, 'error')
+      return
+    }
+
     flowActions.setNodeStatus(imageNodeId, 'running')
 
-    const node = getFlowStore().nodes.find((item) => item.id === imageNodeId)
+    const node = store.nodes.find((item) => item.id === imageNodeId)
     const imageData = (node?.data ?? {}) as GptImageNodeData
 
     try {
+      const referenceImages =
+        connectedReferences > 0
+          ? await resolveGptImageReferences(
+              store.nodes,
+              store.edges,
+              imageNodeId,
+              getFlowImage,
+            )
+          : undefined
+
+      if (connectedReferences > 0 && (referenceImages?.length ?? 0) === 0) {
+        flowActions.setNodeStatus(imageNodeId, 'error')
+        return
+      }
+
+      if (connectedReferences > GPT_IMAGE_MAX_REFERENCE_IMAGES) {
+        console.warn(
+          `GPT 生图仅使用前 ${GPT_IMAGE_MAX_REFERENCE_IMAGES} 张参考图`,
+        )
+      }
+
       const { base64, mimeType } = await runGptImageFn({
         data: {
           prompt,
@@ -751,6 +885,7 @@ export const flowActions = {
             imageData.outputCompression ?? GPT_IMAGE_DEFAULTS.outputCompression,
           background: imageData.background ?? GPT_IMAGE_DEFAULTS.background,
           moderation: imageData.moderation ?? GPT_IMAGE_DEFAULTS.moderation,
+          referenceImages,
         },
       })
       flowActions.setNodeStatus(imageNodeId, 'done')

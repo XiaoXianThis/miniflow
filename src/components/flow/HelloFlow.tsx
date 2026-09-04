@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import {
   Background,
   Controls,
@@ -26,12 +27,15 @@ import {
 import type { FlowNodeType } from './types'
 import {
   flowActions,
+  flowSaveStore,
   flushFlowStore,
-  initFlowStore,
   isValidFlowConnection,
+  loadFlowDocument,
+  unloadFlowDocument,
   type FlowPersistedState,
 } from '#/stores/flow-store'
 import { FlowStoreProvider, useFlowStore } from '#/stores/flow-store-context'
+import { DEFAULT_FLOW_NAME } from '#/shared/flows'
 
 const nodeTypes = {
   textInput: TextInputNode,
@@ -213,7 +217,7 @@ function FlowCanvas() {
         deleteKeyCode={['Backspace', 'Delete']}
       >
         <Background gap={16} size={1} />
-        <Controls />
+        <Controls position="bottom-right" />
         <NodePalette onAddNode={addNode} />
       </ReactFlow>
       {isDraggingImage && (
@@ -227,18 +231,72 @@ function FlowCanvas() {
   )
 }
 
-export function HelloFlow() {
+function saveStatusLabel(status: 'idle' | 'saving' | 'saved' | 'error') {
+  if (status === 'saving') return '保存中…'
+  if (status === 'error') return '保存失败'
+  if (status === 'saved') return '已保存'
+  return ''
+}
+
+function FlowEditorHeader() {
+  const flowStore = useFlowStore()
+  const { name } = useSnapshot(flowStore)
+  const { saveStatus } = useSnapshot(flowSaveStore)
+
+  return (
+    <UserBar
+      leading={
+        <>
+          <Link
+            to="/"
+            className="shrink-0 text-sm text-slate-600 transition hover:text-slate-900"
+          >
+            ← 全部流程
+          </Link>
+          <input
+            value={name}
+            onChange={(event) => flowActions.setFlowName(event.target.value)}
+            onBlur={() => {
+              if (!flowStore.name.trim()) {
+                flowActions.setFlowName(DEFAULT_FLOW_NAME)
+              }
+            }}
+            className="min-w-0 max-w-xs flex-1 rounded-md border border-transparent bg-transparent px-2 py-1 text-sm font-medium text-slate-900 outline-none hover:border-slate-200 focus:border-violet-400 focus:bg-white"
+            aria-label="流程名称"
+          />
+          <span className="shrink-0 text-xs text-slate-400">
+            {saveStatusLabel(saveStatus)}
+          </span>
+        </>
+      }
+    />
+  )
+}
+
+export function HelloFlow({ flowId }: { flowId: string }) {
   const [store, setStore] = useState<FlowPersistedState | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    initFlowStore().then((initialized) => {
-      if (!cancelled) setStore(initialized)
-    })
+    setStore(null)
+    setLoadError(null)
+
+    loadFlowDocument(flowId)
+      .then((initialized) => {
+        if (!cancelled) setStore(initialized)
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : '加载流程失败')
+        }
+      })
+
     return () => {
       cancelled = true
+      void unloadFlowDocument()
     }
-  }, [])
+  }, [flowId])
 
   useEffect(() => {
     const flush = () => {
@@ -256,12 +314,26 @@ export function HelloFlow() {
       window.removeEventListener('beforeunload', flush)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [])
+  }, [flowId])
 
-  if (!store) {
+  if (loadError) {
+    return (
+      <div className="flex h-full w-full flex-col">
+        <UserBar />
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 text-slate-600">
+          <p>{loadError}</p>
+          <Link to="/" className="text-sm text-violet-700 hover:text-violet-800">
+            返回流程列表
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  if (!store || store.id !== flowId) {
     return (
       <div className="flex h-full w-full items-center justify-center text-slate-500">
-        加载流程编辑器…
+        加载流程…
       </div>
     )
   }
@@ -270,7 +342,7 @@ export function HelloFlow() {
     <FlowStoreProvider store={store}>
       <ReactFlowProvider>
         <div className="flex h-full w-full flex-col">
-          <UserBar />
+          <FlowEditorHeader />
           <div className="min-h-0 flex-1">
             <FlowCanvas />
           </div>
